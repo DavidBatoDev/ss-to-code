@@ -10,3 +10,11 @@ Browser ──> Next.js (:3000) ──/api/generate proxy──> FastAPI (:8000)
 ```
 The frontend proxies to the backend through `BACKEND_URL`, which is read at runtime. One image works in every environment because no backend URL gets baked in at build time (the original repo's main deployment gotcha).
 
+## Run locally
+```bash
+cp .env.example .env   # add OPENAI_API_KEY
+docker compose up --build
+# http://localhost:3000
+```
+Dev without Docker: `cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload`, then `cd frontend && npm install && npm run dev`.
+
