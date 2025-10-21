@@ -1,0 +1,32 @@
+# Image tags IMAGE_TAG / DOCKERHUB_USER are substituted by Jenkins (envsubst).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ss-to-code
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: ss-to-code
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector: { matchLabels: { app: backend } }
+  template:
+    metadata: { labels: { app: backend } }
+    spec:
+      containers:
+        - name: backend
+          image: ${DOCKERHUB_USER}/ss-to-code-backend:${IMAGE_TAG}
+          ports: [{ containerPort: 8000 }]
+          env:
+            - name: APP_VERSION
+              value: "${IMAGE_TAG}"
+            - name: OPENAI_API_KEY
+              valueFrom: { secretKeyRef: { name: openai, key: OPENAI_API_KEY } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+          readinessProbe: { httpGet: { path: /health, port: 8000 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: 8000 }, periodSeconds: 20 }
