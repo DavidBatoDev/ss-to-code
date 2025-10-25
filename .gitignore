@@ -4,3 +4,4 @@ node_modules/
 __pycache__/
 .venv/
 .pytest_cache/
+k8s/secret.yaml
