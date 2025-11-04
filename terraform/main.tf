@@ -83,3 +83,26 @@ resource "aws_iam_instance_profile" "ec2" {
   role = aws_iam_role.ec2.name
 }
 
+resource "aws_cloudwatch_log_group" "app" {
+  name              = "/ss-to-code/app"
+  retention_in_days = 3
+}
+
+resource "aws_instance" "box" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  key_name               = var.key_name
+  vpc_security_group_ids = [aws_security_group.app.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+  user_data              = file("${path.module}/user_data.sh")
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+  }
+
+  metadata_options { http_tokens = "required" }
+
+  tags = { Name = "ss-to-code" }
+}
+
