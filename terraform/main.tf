@@ -106,3 +106,14 @@ resource "aws_instance" "box" {
   tags = { Name = "ss-to-code" }
 }
 
+resource "aws_cloudwatch_metric_alarm" "cpu" {
+  alarm_name          = "ss-to-code-high-cpu"
+  namespace           = "AWS/EC2"
+  metric_name         = "CPUUtilization"
+  statistic           = "Average"
+  period              = 300
+  evaluation_periods  = 2
+  threshold           = 80
+  comparison_operator = "GreaterThanThreshold"
+  dimensions          = { InstanceId = aws_instance.box.id }
+}
