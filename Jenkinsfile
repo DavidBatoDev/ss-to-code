@@ -43,5 +43,40 @@ pipeline {
       }
     }
 
+    stage('Trivy FS scan') {
+      steps {
+        sh 'trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 --format table -o trivy-fs.txt .'
+      }
+    }
+
+    stage('Docker build') {
+      parallel {
+        stage('Backend image')  { steps { sh 'docker build -t $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG backend' } }
+        stage('Frontend image') { steps { sh 'docker build -t $DOCKERHUB_USER/ss-to-code-frontend:$IMAGE_TAG frontend' } }
+      }
+    }
+
+    stage('Trivy image scan') {
+      steps {
+        sh '''
+          for svc in backend frontend; do
+            trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
+              -o trivy-$svc.txt $DOCKERHUB_USER/ss-to-code-$svc:$IMAGE_TAG
+          done
+        '''
+      }
+    }
+
+    stage('Push') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'U', passwordVariable: 'P')]) {
+          sh '''
+            echo "$P" | docker login -u "$U" --password-stdin
+            for svc in backend frontend; do docker push $DOCKERHUB_USER/ss-to-code-$svc:$IMAGE_TAG; done
+          '''
+        }
+      }
+    }
+
   }
 }
