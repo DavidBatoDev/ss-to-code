@@ -78,5 +78,45 @@ pipeline {
       }
     }
 
+    stage('Deploy to k3s') {
+      steps {
+        withCredentials([string(credentialsId: 'openai-api-key', variable: 'OPENAI_API_KEY')]) {
+          sh '''
+            envsubst < k8s/app.yaml | kubectl apply -f -
+            kubectl -n ss-to-code create secret generic openai \
+              --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
+            kubectl -n ss-to-code rollout status deploy/backend --timeout=120s
+            kubectl -n ss-to-code rollout status deploy/frontend --timeout=120s
+          '''
+        }
+      }
+    }
+
+    stage('Smoke test') {
+      steps {
+        sh '''
+          for i in $(seq 1 10); do
+            curl -fsS $APP_URL/api/health && exit 0; sleep 3
+          done
+          exit 1
+        '''
+      }
+    }
+  }
+
+  post {
+    failure {
+      sh '''
+        if kubectl -n ss-to-code get deploy backend >/dev/null 2>&1; then
+          echo "Rolling back..."
+          kubectl -n ss-to-code rollout undo deploy/backend || true
+          kubectl -n ss-to-code rollout undo deploy/frontend || true
+        fi
+      '''
+    }
+    always {
+      archiveArtifacts artifacts: 'trivy-*.txt', allowEmptyArchive: true
+      sh 'docker image prune -f || true'
+    }
   }
 }
