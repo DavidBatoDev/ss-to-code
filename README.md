@@ -25,7 +25,6 @@ flowchart LR
   K --> OAI[OpenAI API]
   U -.->|auth| SB[Supabase]
   J -->|aws s3 sync + invalidation| S3
-  J -->|docker push| DH[(Docker Hub)]
 ```
 
 - **Same origin for everything.** The browser calls relative `/api/...` URLs, so there's no CORS.
@@ -63,8 +62,6 @@ Bootstrapping takes about 5–8 minutes (`user_data.sh` installs Docker, Jenkins
 
    | ID | Kind | Value |
    |---|---|---|
-   | `dockerhub` | Username with password | Docker Hub user + access token |
-   | `dockerhub-user` | Secret text | Docker Hub username |
    | `openai-api-key` | Secret text | OpenAI API key |
    | `supabase-url` | Secret text | `https://<project>.supabase.co` |
    | `supabase-publishable-key` | Secret text | Supabase publishable key |
@@ -92,7 +89,7 @@ The bucket and distribution are found at runtime by the distribution's Comment (
 
 ## Rollback
 
-- **Backend:** this is automatic on failure. To roll back by hand: `kubectl -n ss-to-code rollout undo deploy/backend`. Images are tagged `$BUILD_NUMBER`, so any earlier build can be redeployed.
+- **Backend:** this is automatic on failure. To roll back by hand: `kubectl -n ss-to-code rollout undo deploy/backend`. Images are tagged `$BUILD_NUMBER` and kept in k3s, so `rollout undo` has the previous image locally.
 - **Frontend:** use *Rebuild* on the last good Jenkins build, or restore the previous object versions (bucket versioning is on and keeps old versions for 14 days), then run
   `aws cloudfront create-invalidation --distribution-id <id> --paths "/*"`.
 

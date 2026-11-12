@@ -1,4 +1,4 @@
-# Image tags IMAGE_TAG / DOCKERHUB_USER are substituted by Jenkins (envsubst).
+# IMAGE / IMAGE_TAG are substituted by Jenkins (envsubst). The image is imported into k3s directly.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ${DOCKERHUB_USER}/ss-to-code-backend:${IMAGE_TAG}
+          image: docker.io/library/${IMAGE}:${IMAGE_TAG}
+          imagePullPolicy: Never
           ports: [{ containerPort: 8000 }]
           env:
             - name: APP_VERSION

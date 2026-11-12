@@ -1,13 +1,12 @@
 // Backend  -> Docker Hub -> k3s (NodePort 30800, CloudFront /api/* origin)
 // Frontend -> static export -> S3 -> CloudFront invalidation
-// Credentials (Manage Jenkins -> Credentials):
-//   dockerhub-user (secret text), dockerhub (username/password or token),
-//   openai-api-key, supabase-url, supabase-publishable-key (secret text)
+// Single-node k3s: the image is built on this box and imported straight into k3s' containerd,
+// so no registry is needed. Credentials (secret text): openai-api-key, supabase-url, supabase-publishable-key
 pipeline {
   agent any
 
   environment {
-    DOCKERHUB_USER     = credentials('dockerhub-user')
+    IMAGE              = 'ss-to-code-backend'
     IMAGE_TAG          = "${env.BUILD_NUMBER}"
     KUBECONFIG         = '/var/lib/jenkins/.kube/config'
     BACKEND_URL        = 'http://localhost:30800'
@@ -58,21 +57,16 @@ pipeline {
     stage('Backend: build & scan') {
       steps {
         sh '''
-          docker build -t $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG backend
+          docker build -t $IMAGE:$IMAGE_TAG backend
           trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
-            -o trivy-backend.txt $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG
+            -o trivy-backend.txt $IMAGE:$IMAGE_TAG
         '''
       }
     }
 
-    stage('Backend: push') {
+    stage('Backend: load into k3s') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'U', passwordVariable: 'P')]) {
-          sh '''
-            echo "$P" | docker login -u "$U" --password-stdin
-            docker push $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG
-          '''
-        }
+        sh 'docker save $IMAGE:$IMAGE_TAG | sudo /usr/local/bin/k3s ctr images import -'
       }
     }
 
@@ -87,7 +81,7 @@ metadata: { name: ss-to-code }
 EOF
             kubectl -n ss-to-code create secret generic openai \
               --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
-            envsubst '$DOCKERHUB_USER $IMAGE_TAG' < k8s/app.yaml | kubectl apply -f -
+            envsubst '$IMAGE $IMAGE_TAG' < k8s/app.yaml | kubectl apply -f -
             kubectl -n ss-to-code rollout status deploy/backend --timeout=180s
           '''
         }
