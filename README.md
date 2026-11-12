@@ -9,7 +9,7 @@ This repo is also a small end-to-end DevOps project: a static frontend on S3 + C
 | Frontend | Next.js 15 (static export), TypeScript, Tailwind v4, Supabase auth (PKCE) |
 | Backend | FastAPI, OpenAI streaming, non-root multi-stage Docker image |
 | Hosting | S3 (private, OAC) + CloudFront · k3s on one EC2 instance |
-| CI/CD | Jenkins: lint/test → Trivy → build → push → deploy → smoke test → rollback |
+| CI/CD | Jenkins: lint/test → Trivy → build → load into k3s → deploy → smoke test → rollback |
 | IaC / Ops | Terraform, CloudWatch agent + alarms, SSM Session Manager, AWS Budget |
 
 ## Architecture
@@ -79,7 +79,7 @@ In **Authentication → URL Configuration**, set the **Site URL** to `https://<c
 |---|---|
 | Lint & Test (parallel) | Backend: `ruff` + `pytest`. Frontend: `tsc --noEmit` |
 | Trivy FS scan | Vulnerabilities and secrets in the repo (report archived) |
-| Backend | `docker build` → Trivy image scan (fails on CRITICAL) → push `:$BUILD_NUMBER` → `kubectl apply` → `rollout status` → `curl /api/health` |
+| Backend | `docker build` → Trivy image scan (fails on CRITICAL) → import `:$BUILD_NUMBER` into k3s (single node, no registry) → `kubectl apply` → `rollout status` → `curl /api/health` |
 | Frontend | `npm ci && npm run build` with the Supabase values from credentials → S3 sync in 2 passes (hashed assets `immutable`, HTML `no-cache`) → CloudFront invalidation `/*` and wait |
 | E2E smoke test | `GET /` = 200 and `GET /api/health` = ok through CloudFront, with retries |
 | On failure | `kubectl rollout undo deploy/backend` |
@@ -112,4 +112,4 @@ Stop the instance when you're not using it (`aws ec2 stop-instances`). The Elast
 ./scripts/teardown.sh
 ```
 
-This empties the versioned bucket (all object versions), runs `terraform destroy`, and then lists any `Project=ss-to-code` resources that are still around. The Docker Hub images aren't AWS resources, so delete those yourself if you want.
+This empties the versioned bucket (all object versions), runs `terraform destroy`, and then lists any `Project=ss-to-code` resources that are still around.

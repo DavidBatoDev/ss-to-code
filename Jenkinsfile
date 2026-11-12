@@ -1,4 +1,4 @@
-// Backend  -> Docker Hub -> k3s (NodePort 30800, CloudFront /api/* origin)
+// Backend  -> docker build -> k3s (NodePort 30800, CloudFront /api/* origin)
 // Frontend -> static export -> S3 -> CloudFront invalidation
 // Single-node k3s: the image is built on this box and imported straight into k3s' containerd,
 // so no registry is needed. Credentials (secret text): openai-api-key, supabase-url, supabase-publishable-key
