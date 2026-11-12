@@ -35,7 +35,7 @@ pipeline {
                 python3 -m venv .venv && . .venv/bin/activate
                 pip install -q -r requirements.txt
                 ruff check app
-                pytest -q
+                python -m pytest -q
               '''
             }
           }
