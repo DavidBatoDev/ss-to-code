@@ -10,8 +10,9 @@ This repo is also a small end-to-end DevOps project: a static frontend on S3 + C
 
 - [Features](#features)
 - [Tech stack](#tech-stack)
-- [Repository layout](#repository-layout)
+- [Working tree](#working-tree)
 - [Architecture](#architecture)
+- [Design decisions: why, and why not](#design-decisions-why-and-why-not)
 - [How a generation works](#how-a-generation-works)
 - [Authentication and data](#authentication-and-data)
 - [Backend API](#backend-api)
@@ -51,29 +52,110 @@ This repo is also a small end-to-end DevOps project: a static frontend on S3 + C
 | CI/CD | Jenkins: lint/test → Trivy → build → load into k3s → deploy → smoke test → rollback |
 | IaC / Ops | Terraform, CloudWatch agent + alarms, SSM Session Manager, AWS Budget |
 
-## Repository layout
+## Working tree
+
+Every tracked file, what it does, and where it fits in the system.
 
 ```text
 ss-to-code/
-├── backend/                  FastAPI service
-│   ├── app/main.py           routes, validation, OpenAI streaming + retry
-│   ├── app/prompts.py        stack definitions and system/update prompts
-│   ├── tests/test_api.py     pytest API tests
-│   └── Dockerfile            python:3.12-slim, runs as uid 10001
-├── frontend/                 Next.js app (output: static export)
-│   ├── app/                  /, /login, /auth/callback, /reset-password, /studio
-│   ├── components/           export modal, speedrun timer, demo, illustrations
-│   ├── lib/preview.ts        scripts injected into the sandboxed preview (zoom, capture)
-│   ├── lib/supabase/         browser Supabase client
-│   ├── nginx.conf            local parity: serves the export, proxies /api
-│   └── Dockerfile            node:22 build → nginx-unprivileged
-├── supabase/migrations/      profiles + generations tables, RLS, signup trigger
-├── k8s/app.yaml              Namespace, Deployment, NodePort Service
-├── terraform/                VPC-default EC2, S3, CloudFront, IAM, alarms, budget
-├── scripts/teardown.sh       empty the bucket, destroy, list leftovers
-├── Jenkinsfile               CI/CD pipeline
-└── docker-compose.yml        local stack
+├── .env.example                 template for local secrets (OpenAI key, model list, Supabase)
+├── .gitignore
+├── docker-compose.yml           local stack: backend :8000 + nginx frontend :3000
+├── Jenkinsfile                  the whole CI/CD pipeline
+├── README.md
+│
+├── backend/                     ── the API (Python 3.12 / FastAPI) ──
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py              routes, validation, model allow-list, OpenAI streaming + retries
+│   │   └── prompts.py           STACKS dict, SYSTEM_PROMPT, UPDATE_PROMPT, build_messages()
+│   ├── tests/test_api.py        pytest with FastAPI TestClient (no OpenAI calls)
+│   ├── requirements.txt         pinned fastapi, uvicorn, openai, pydantic, httpx, pytest, ruff
+│   ├── Dockerfile               python:3.12-slim, non-root uid 10001, HEALTHCHECK on /health
+│   └── .dockerignore
+│
+├── frontend/                    ── the web app (Next.js 15, static export) ──
+│   ├── app/                     App Router pages, each exported to <route>/index.html
+│   │   ├── layout.tsx           root layout, fonts, global CSS
+│   │   ├── globals.css          Tailwind v4 entry + theme tokens
+│   │   ├── page.tsx             landing page (features, demo)
+│   │   ├── loading.tsx, error.tsx
+│   │   ├── login/page.tsx       sign in / sign up / forgot password
+│   │   ├── auth/callback/page.tsx   exchangeCodeForSession (PKCE) after email links
+│   │   ├── reset-password/page.tsx  updateUser({ password })
+│   │   └── studio/
+│   │       ├── layout.tsx       studio shell
+│   │       └── page.tsx         upload, stack/model pickers, streaming editor, preview, history
+│   ├── components/
+│   │   ├── export-modal.tsx     PNG/JPEG export at preset sizes via the capture script
+│   │   ├── speedrun.tsx         generation timer with per-model personal bests (localStorage)
+│   │   ├── demo.tsx             animated demo on the landing page
+│   │   ├── auth-shell.tsx, modal.tsx, logo.tsx, illustrations.tsx
+│   ├── lib/
+│   │   ├── preview.ts           scripts injected into the sandboxed iframe (zoom bridge, capture)
+│   │   └── supabase/client.ts   browser Supabase client
+│   ├── next.config.ts           dev: /api rewrite · build: output "export", trailingSlash
+│   ├── nginx.conf               local parity with CloudFront: static files + /api proxy, no buffering
+│   ├── Dockerfile               node:22-alpine build → nginx-unprivileged
+│   ├── package.json, package-lock.json, tsconfig.json, postcss.config.mjs, next-env.d.ts
+│   └── .dockerignore
+│
+├── supabase/migrations/
+│   └── 0001_init.sql            profiles + generations, RLS policies, on-signup trigger
+│
+├── k8s/
+│   └── app.yaml                 Namespace, Deployment (1 replica, probes, limits), NodePort 30800
+│
+├── terraform/                   ── all AWS infrastructure ──
+│   ├── main.tf                  provider, Ubuntu 24.04 AMI, security group, IAM role, EC2, logs, CPU alarm
+│   ├── frontend.tf              Elastic IP, S3 bucket (+ policy, versioning, lifecycle), OAC,
+│   │                            CloudFront Function, distribution, deploy IAM policy, Budget
+│   ├── variables.tf             region, instance_type, key_name, my_ip_cidr, backend_node_port
+│   ├── outputs.tf               cloudfront_url, bucket_name, distribution_id, public_ip, jenkins_url, ssm
+│   ├── user_data.sh             first-boot: Docker, Jenkins, k3s, Trivy, Node 22, AWS CLI, CW agent
+│   ├── example.tfvars
+│   └── .terraform.lock.hcl      pinned provider versions
+│
+└── scripts/
+    └── teardown.sh              empty versioned bucket → terraform destroy → list leftovers by tag
 ```
+
+### How the pieces relate
+
+```mermaid
+flowchart LR
+  subgraph Source
+    FE[frontend/]
+    BE[backend/]
+    K8[k8s/app.yaml]
+    TF[terraform/]
+    SQL[supabase/migrations/]
+    JF[Jenkinsfile]
+  end
+  TF -->|creates| AWS[(EC2 · S3 · CloudFront · IAM)]
+  TF -->|user_data.sh installs| JEN[Jenkins + k3s on EC2]
+  JF -->|runs on| JEN
+  JEN -->|npm run build → out/| FE
+  JEN -->|docker build| BE
+  JEN -->|envsubst + kubectl apply| K8
+  FE -->|aws s3 sync| AWS
+  BE -->|k3s ctr import| JEN
+  SQL -->|supabase db push| SUP[(Supabase)]
+  DC[docker-compose.yml] -->|local only| FE
+  DC --> BE
+```
+
+**Who owns what at runtime**
+
+| Concern | Lives in | Changed by |
+|---|---|---|
+| Prompts and output formats | `backend/app/prompts.py` | Backend deploy (Jenkins) |
+| Allowed models | `OPENAI_MODEL(S)` env | `.env` locally; the default in `main.py` on AWS |
+| UI, routing, auth flow | `frontend/app/**` | Frontend deploy (S3 sync + invalidation) |
+| Preview isolation | `frontend/lib/preview.ts` + iframe `sandbox` in `studio/page.tsx` | Frontend deploy |
+| Database schema and access rules | `supabase/migrations/` | Applied by hand with the Supabase CLI |
+| Pod spec, port, resources | `k8s/app.yaml` | Every pipeline run (`kubectl apply`) |
+| Network, IAM, CDN, budget | `terraform/` | `terraform apply` by hand (not in CI) |
 
 ## Architecture
 
@@ -137,6 +219,151 @@ flowchart TB
   I --> LG
   AL --> I
 ```
+
+## Design decisions: why, and why not
+
+The project has two goals that pull against each other: show a realistic production-style setup (CDN, containers, orchestration, IaC, CI/CD with security gates and rollback), and keep the bill under about $10 a week. Most choices below come from that tension.
+
+### 1. Static export on S3 + CloudFront, not a Next.js server
+
+**Why**
+- Every page is client-rendered after login anyway: the studio talks to `/api` and Supabase from the browser. A Node server would only be serving HTML.
+- S3 + CloudFront is close to free at this scale, has no process to keep alive, and scales by itself.
+- The backend box only has to handle API traffic, which matters on a single t3.medium.
+
+**Why not the alternatives**
+| Option | Reason it wasn't used |
+|---|---|
+| `next start` on EC2/k3s | Another long-running process competing for 4 GB RAM with Jenkins and k3s. No SSR need. |
+| Vercel / Amplify | Works fine, but it hides the CDN, cache headers and invalidation, which this project is meant to show. |
+| Public S3 website endpoint | Needs a public bucket and only speaks HTTP. OAC keeps the bucket private. |
+
+**Cost of this choice:** no server components, middleware or ISR. S3 REST origins don't serve `index.html` for sub-paths, so a CloudFront Function rewrites `/studio` → `/studio/index.html` and `trailingSlash: true` is set in `next.config.ts`. Supabase values are baked in at build time.
+
+### 2. One origin (CloudFront routes `/api/*`), not a separate API domain
+
+**Why**
+- The browser makes relative `/api/...` calls, so there's no CORS config, no preflight requests and no extra certificate or DNS.
+- The backend never needs a public hostname, so the security group can allow only CloudFront's managed prefix list.
+- nginx (compose) and the `next dev` rewrite copy the same routing, so the frontend code is the same everywhere.
+
+**Why not** `api.example.com` + CORS: more moving parts (domain, cert, CORS allow-list) and an API that's reachable directly from the internet.
+
+**Trade-off:** CloudFront's origin read timeout (60 s) applies between bytes. Streaming keeps bytes flowing, so long generations still work, but a model that stays silent for over 60 s before its first token would fail.
+
+### 3. FastAPI backend, not calling OpenAI from the browser
+
+**Why**
+- The OpenAI key must never reach the client.
+- The server enforces the model allow-list, image size limit, stack whitelist and `max_completion_tokens`, so a user can't pick an expensive model or send huge payloads.
+- Async FastAPI + `AsyncOpenAI` handles many slow streaming requests on one small process.
+
+**Why not** a serverless function (Lambda): response streaming through API Gateway is awkward, and long generations run into timeouts. It would also remove the container/Kubernetes part of the project.
+
+### 4. Plain text streaming, not SSE or WebSockets
+
+**Why:** the payload is one growing string. A chunked `text/plain` response read with `fetch().body.getReader()` is the simplest thing that works through CloudFront and nginx. The only extra step is turning off proxy buffering (`X-Accel-Buffering: no`, `proxy_buffering off`).
+
+**Why not**
+- **SSE:** adds event framing for no benefit. There's only one kind of message.
+- **WebSockets:** CloudFront supports them, but they need connection state and don't fit a request/response flow.
+
+**Trade-off:** errors can't use HTTP status codes once streaming has started (headers are already sent). So a mid-stream failure is sent as a trailing `<!-- ERROR: ... -->` comment, and the client checks for it.
+
+### 5. Retry only before the first byte
+
+The backend retries up to 3 times with growing backoff, but only while nothing has been sent. Retrying after output started would make the client see duplicated, broken code. This is the one place where "retry everything" would be wrong.
+
+### 6. k3s on one EC2 instance, not EKS / ECS / plain Docker
+
+**Why k3s**
+- Real Kubernetes objects (Deployment, Service, Secret, probes, `rollout undo`) at the cost of one VM.
+- Rollback history (`revisionHistoryLimit: 5`) comes for free.
+- Traefik is disabled in `user_data.sh` because CloudFront already does routing.
+
+| Option | Reason it wasn't used |
+|---|---|
+| EKS | Control plane alone is ~$17/week, more than the whole budget. |
+| ECS Fargate | No Kubernetes, and per-task costs plus a load balancer. |
+| `docker run` on EC2 | Works, but no declarative rollout, probes or built-in rollback. |
+
+**Cost of this choice:** a single point of failure. One node, one replica, no high availability. If the instance stops, the API is down. This is accepted for a demo; see [What would change for production](#what-would-change-for-production).
+
+### 7. No container registry: `docker save | k3s ctr images import`
+
+**Why:** Jenkins builds on the same machine k3s runs on. Importing the image straight into k3s' containerd avoids running or paying for a registry and handling pull credentials. `imagePullPolicy: Never` makes sure k3s never tries to pull.
+
+**Why not ECR / Docker Hub:** an extra service, IAM, and network round trip with no benefit on a single node. (An earlier version pushed to Docker Hub. It was removed.)
+
+**Trade-off:** doesn't work as soon as there's a second node. Images are tagged `$BUILD_NUMBER`, so old ones stay local for `rollout undo`, and `docker image prune --filter until=24h` keeps the disk under control.
+
+### 8. NodePort, not an Ingress or LoadBalancer Service
+
+CloudFront is the only client. A NodePort on 30800, locked down by the security group, is enough. An Ingress controller would be a second router behind CloudFront, and a `LoadBalancer` Service would create an AWS load balancer (~$4/week) for one backend.
+
+### 9. Jenkins on the same instance, not GitHub Actions
+
+**Why**
+- Jenkins can reach k3s and Docker locally, so deploys need no cluster credentials or AWS keys stored outside AWS. It uses the instance role.
+- Showing a self-hosted Jenkins with a declarative pipeline is part of the project's goal.
+
+**Why not GitHub Actions:** it would need AWS credentials (or OIDC setup) and a way into the private k3s API, for example a self-hosted runner, which brings back the same box.
+
+**Trade-offs:** builds share CPU and memory with production traffic. Jenkins on port 8080 is restricted to `my_ip_cidr`. `disableConcurrentBuilds()` stops two deploys from fighting.
+
+### 10. Trivy: block on CRITICAL in the image, report-only on the repo
+
+- **Image scan** (`--severity CRITICAL --exit-code 1 --ignore-unfixed`) blocks the build. What ships is what matters, and only fixable criticals are blocked, so the pipeline isn't stuck on issues nobody can fix yet.
+- **Filesystem scan** (vulns + secrets, HIGH/CRITICAL) runs with `--exit-code 0` and is archived. It's there for visibility, and so a dev-only dependency doesn't stop deploys.
+
+### 11. Two-pass S3 sync with different cache headers
+
+Next.js puts a content hash in asset filenames, so they can be cached for a year (`immutable`). HTML files keep the same names, so they're `no-cache`. A single sync would have to pick one rule for both. The `/*` invalidation then clears anything CloudFront already holds.
+
+### 12. Look up the bucket and distribution at deploy time
+
+The Jenkinsfile finds the distribution by its Comment (`ss-to-code`) and gets the bucket from its S3 origin. This means Terraform outputs don't need to be copied into Jenkins, and a `destroy` + `apply` (new random names) needs no pipeline change. It costs one unscoped permission, `cloudfront:ListDistributions`, which can't be limited to a resource.
+
+### 13. Supabase for auth and history, not a self-built auth service
+
+**Why:** Auth (email, reset links, PKCE) and Postgres with Row Level Security at no cost. The browser talks to Supabase directly, and RLS makes that safe: every query is limited to `auth.uid()`. The FastAPI backend stays stateless and doesn't need a database.
+
+**Why not**
+- **Cognito:** more setup for the same result, and no database.
+- **RDS:** a database instance costs more than the whole weekly budget.
+- **Saving history through the backend:** the backend would need DB credentials and JWT checks. RLS already does that job.
+
+**Trade-off:** the `/api/generate` endpoint does not check the Supabase session. Anyone who finds the URL can call it, limited only by the model allow-list and size limits. Adding JWT checks in FastAPI is the first item for a public launch.
+
+### 14. Sandboxed iframe without `allow-same-origin`
+
+Generated code is untrusted: it's model output, possibly shaped by whatever was in the screenshot. With `allow-scripts` only, it runs in an opaque origin and can't read the app's cookies, `localStorage` or Supabase tokens. Communication goes only through `postMessage`.
+
+This is why image export uses `html-to-image` inside the iframe and not `html2canvas`: `html2canvas` clones into a nested iframe, which needs `allow-same-origin`, and that would undo the isolation.
+
+### 15. Single-file output with CDN libraries
+
+Every stack produces one HTML file that loads React/Vue/Babel/Tailwind from a CDN. This lets the preview be a plain `srcdoc` iframe with no bundler, and the download opens in any browser. The cost is that it's not a project structure you'd ship directly (Babel in the browser, development builds). It's a starting point to copy from.
+
+### 16. Terraform run by hand, local state
+
+Infrastructure changes rarely and can delete things, so it isn't in the app pipeline. State is local by default. A commented-out S3 + DynamoDB backend in `main.tf` is ready for team use.
+
+### 17. EC2 access over SSM, Elastic IP for a stable origin
+
+SSM Session Manager means no SSH key is required (`key_name` is optional). The Elastic IP keeps the CloudFront origin address the same when the instance is stopped to save money and started again.
+
+### What would change for production
+
+| Today | For production |
+|---|---|
+| 1 EC2 node, 1 replica | EKS or a multi-node k3s cluster across AZs, 2+ replicas, PodDisruptionBudget |
+| Images imported locally | ECR with immutable tags and image signing |
+| Jenkins on the app box | Separate CI runners |
+| `/api/generate` unauthenticated | Verify Supabase JWT in FastAPI, per-user rate limits and quotas |
+| CloudFront default certificate | Custom domain with ACM certificate, AWS WAF with rate rules |
+| Local Terraform state | S3 + DynamoDB remote state, plan in CI, apply on approval |
+| CPU alarm only | Request metrics, error-rate and latency alarms, tracing |
 
 ## How a generation works
 
