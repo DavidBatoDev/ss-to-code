@@ -27,6 +27,10 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 resource "aws_security_group" "app" {
   name        = "ss-to-code-sg"
   description = "Jenkins + app"
@@ -46,11 +50,11 @@ resource "aws_security_group" "app" {
     cidr_blocks = [var.my_ip_cidr]
   }
   ingress {
-    description = "App NodePort"
-    from_port   = 30080
-    to_port     = 30080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "Backend NodePort, CloudFront origin-facing IPs only"
+    from_port       = var.backend_node_port
+    to_port         = var.backend_node_port
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
   }
   egress {
     from_port   = 0
@@ -91,7 +95,7 @@ resource "aws_cloudwatch_log_group" "app" {
 resource "aws_instance" "box" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  key_name               = var.key_name
+  key_name               = var.key_name == "" ? null : var.key_name
   vpc_security_group_ids = [aws_security_group.app.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
   user_data              = file("${path.module}/user_data.sh")

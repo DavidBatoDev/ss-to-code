@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstraps: swap, Docker, Jenkins, k3s, Trivy, Node 22, Python, CloudWatch agent
+# Bootstraps: swap, Docker, Jenkins, k3s, Trivy, Node 22, Python, AWS CLI v2, CloudWatch agent
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -22,6 +22,10 @@ curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key -o /usr/shar
 echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" > /etc/apt/sources.list.d/jenkins.list
 apt-get update && apt-get install -y jenkins
 usermod -aG docker jenkins
+
+# AWS CLI v2 (Jenkins deploys the frontend to S3/CloudFront)
+curl -fsSLo /tmp/awscli.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install
 
 # Trivy
 curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin

@@ -10,10 +10,16 @@ variable "instance_type" {
 
 variable "key_name" {
   type        = string
-  description = "Existing EC2 key pair name"
+  default     = ""
+  description = "Optional EC2 key pair name (SSM Session Manager works without one)"
 }
 
 variable "my_ip_cidr" {
   type        = string
   description = "Your public IP in CIDR form, e.g. 1.2.3.4/32"
+}
+
+variable "backend_node_port" {
+  type    = number
+  default = 30800
 }
