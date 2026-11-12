@@ -10,3 +10,4 @@ __pycache__/
 !example.tfvars
 k8s/secret.yaml
 out/
+*.tsbuildinfo
