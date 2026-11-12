@@ -4,7 +4,6 @@ import os
 import time
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -21,12 +20,7 @@ MODELS = list(dict.fromkeys([MODEL, *filter(None, os.getenv(
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
 
 app = FastAPI(title="ss-to-code API", version=os.getenv("APP_VERSION", "dev"))
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS: CloudFront serves the frontend and /api/* from the same origin.
 
 _client: AsyncOpenAI | None = None
 
@@ -96,7 +90,7 @@ async def generate(req: GenerateRequest):
                             sent = True
                             yield chunk.choices[0].delta.content
                     return
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - any upstream failure triggers a retry
                     log.warning("generation attempt %d failed: %s", attempt, e)
                     # Can't transparently retry once output has reached the client.
                     if sent or attempt == 3:
