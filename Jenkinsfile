@@ -118,7 +118,7 @@ EOF
           DIST_ID=$(aws cloudfront list-distributions \
             --query "DistributionList.Items[?Comment=='$CF_COMMENT'].Id | [0]" --output text)
           BUCKET=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?Comment=='$CF_COMMENT'].Origins.Items[?Id=='s3'].DomainName | [0][0]" \
+            --query "DistributionList.Items[?Comment=='$CF_COMMENT'].Origins.Items[?Id=='s3'] | [0][0].DomainName" \
             --output text | cut -d. -f1)
           CF_DOMAIN=$(aws cloudfront list-distributions \
             --query "DistributionList.Items[?Comment=='$CF_COMMENT'].DomainName | [0]" --output text)
