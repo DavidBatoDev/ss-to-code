@@ -1,17 +1,25 @@
+// Backend  -> Docker Hub -> k3s (NodePort 30800, CloudFront /api/* origin)
+// Frontend -> static export -> S3 -> CloudFront invalidation
+// Credentials (Manage Jenkins -> Credentials):
+//   dockerhub-user (secret text), dockerhub (username/password or token),
+//   openai-api-key, supabase-url, supabase-publishable-key (secret text)
 pipeline {
   agent any
 
   environment {
-    DOCKERHUB_USER = credentials('dockerhub-user')      // Secret text: your Docker Hub username
-    IMAGE_TAG      = "${env.BUILD_NUMBER}"
-    KUBECONFIG     = '/var/lib/jenkins/.kube/config'
-    APP_URL        = 'http://localhost:30080'
+    DOCKERHUB_USER     = credentials('dockerhub-user')
+    IMAGE_TAG          = "${env.BUILD_NUMBER}"
+    KUBECONFIG         = '/var/lib/jenkins/.kube/config'
+    BACKEND_URL        = 'http://localhost:30800'
+    AWS_DEFAULT_REGION = 'ap-southeast-1'
+    CF_COMMENT         = 'ss-to-code'
   }
 
   options {
     timestamps()
-    timeout(time: 30, unit: 'MINUTES')
+    timeout(time: 40, unit: 'MINUTES')
     buildDiscarder(logRotator(numToKeepStr: '10'))
+    disableConcurrentBuilds()
   }
 
   stages {
@@ -35,9 +43,7 @@ pipeline {
         }
         stage('Frontend') {
           steps {
-            dir('frontend') {
-              sh 'npm install --no-audit --no-fund && npm run lint'
-            }
+            dir('frontend') { sh 'npm ci --no-audit --no-fund && npx tsc --noEmit' }
           }
         }
       }
@@ -45,58 +51,110 @@ pipeline {
 
     stage('Trivy FS scan') {
       steps {
-        sh 'trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 --format table -o trivy-fs.txt .'
+        sh 'trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 0 --skip-dirs frontend/node_modules --skip-dirs backend/.venv -o trivy-fs.txt .'
       }
     }
 
-    stage('Docker build') {
-      parallel {
-        stage('Backend image')  { steps { sh 'docker build -t $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG backend' } }
-        stage('Frontend image') { steps { sh 'docker build -t $DOCKERHUB_USER/ss-to-code-frontend:$IMAGE_TAG frontend' } }
-      }
-    }
-
-    stage('Trivy image scan') {
+    stage('Backend: build & scan') {
       steps {
         sh '''
-          for svc in backend frontend; do
-            trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
-              -o trivy-$svc.txt $DOCKERHUB_USER/ss-to-code-$svc:$IMAGE_TAG
-          done
+          docker build -t $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG backend
+          trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed \
+            -o trivy-backend.txt $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG
         '''
       }
     }
 
-    stage('Push') {
+    stage('Backend: push') {
       steps {
         withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'U', passwordVariable: 'P')]) {
           sh '''
             echo "$P" | docker login -u "$U" --password-stdin
-            for svc in backend frontend; do docker push $DOCKERHUB_USER/ss-to-code-$svc:$IMAGE_TAG; done
+            docker push $DOCKERHUB_USER/ss-to-code-backend:$IMAGE_TAG
           '''
         }
       }
     }
 
-    stage('Deploy to k3s') {
+    stage('Backend: deploy to k3s') {
       steps {
         withCredentials([string(credentialsId: 'openai-api-key', variable: 'OPENAI_API_KEY')]) {
           sh '''
-            envsubst < k8s/app.yaml | kubectl apply -f -
+            kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata: { name: ss-to-code }
+EOF
             kubectl -n ss-to-code create secret generic openai \
               --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
-            kubectl -n ss-to-code rollout status deploy/backend --timeout=120s
-            kubectl -n ss-to-code rollout status deploy/frontend --timeout=120s
+            envsubst '$DOCKERHUB_USER $IMAGE_TAG' < k8s/app.yaml | kubectl apply -f -
+            kubectl -n ss-to-code rollout status deploy/backend --timeout=180s
           '''
         }
       }
     }
 
-    stage('Smoke test') {
+    stage('Backend: smoke test') {
       steps {
         sh '''
           for i in $(seq 1 10); do
-            curl -fsS $APP_URL/api/health && exit 0; sleep 3
+            curl -fsS $BACKEND_URL/api/health && exit 0; sleep 3
+          done
+          exit 1
+        '''
+      }
+    }
+
+    stage('Frontend: build') {
+      steps {
+        dir('frontend') {
+          withCredentials([
+            string(credentialsId: 'supabase-url', variable: 'NEXT_PUBLIC_SUPABASE_URL'),
+            string(credentialsId: 'supabase-publishable-key', variable: 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'),
+          ]) {
+            sh 'NEXT_TELEMETRY_DISABLED=1 npm run build && test -f out/index.html'
+          }
+        }
+      }
+    }
+
+    stage('Frontend: deploy to S3 + CloudFront') {
+      steps {
+        sh '''
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='$CF_COMMENT'].Id | [0]" --output text)
+          BUCKET=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='$CF_COMMENT'].Origins.Items[?Id=='s3'].DomainName | [0][0]" \
+            --output text | cut -d. -f1)
+          CF_DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='$CF_COMMENT'].DomainName | [0]" --output text)
+          echo "bucket=$BUCKET distribution=$DIST_ID"
+          echo "https://$CF_DOMAIN" > cf_url.txt
+
+          # Pass 1: hashed assets, cache forever
+          aws s3 sync frontend/out/ s3://$BUCKET --delete --exclude "*.html" \
+            --cache-control "public,max-age=31536000,immutable"
+          # Pass 2: HTML, always revalidate
+          aws s3 sync frontend/out/ s3://$BUCKET --delete --exclude "*" --include "*.html" \
+            --cache-control "no-cache" --content-type "text/html; charset=utf-8"
+
+          INV=$(aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" \
+            --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id $DIST_ID --id $INV
+        '''
+      }
+    }
+
+    stage('E2E smoke test via CloudFront') {
+      steps {
+        sh '''
+          URL=$(cat cf_url.txt)
+          for i in $(seq 1 12); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' $URL/)" = "200" ] \
+               && curl -fsS $URL/api/health | grep -q '"ok"'; then
+              echo "OK: $URL"; exit 0
+            fi
+            sleep 10
           done
           exit 1
         '''
@@ -106,17 +164,18 @@ pipeline {
 
   post {
     failure {
+      // Frontend rollback: re-run the previous successful build ("Rebuild"), or restore the
+      // previous S3 object versions (bucket versioning is on) and invalidate "/*". See README.
       sh '''
         if kubectl -n ss-to-code get deploy backend >/dev/null 2>&1; then
-          echo "Rolling back..."
+          echo "Rolling back backend..."
           kubectl -n ss-to-code rollout undo deploy/backend || true
-          kubectl -n ss-to-code rollout undo deploy/frontend || true
         fi
       '''
     }
     always {
       archiveArtifacts artifacts: 'trivy-*.txt', allowEmptyArchive: true
-      sh 'docker image prune -f || true'
+      sh 'docker image prune -af --filter "until=24h" || true'
     }
   }
 }
