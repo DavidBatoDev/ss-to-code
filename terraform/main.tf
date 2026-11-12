@@ -108,6 +108,9 @@ resource "aws_instance" "box" {
   metadata_options { http_tokens = "required" }
 
   tags = { Name = "ss-to-code" }
+
+  # A newer AMI or bootstrap script must not silently replace the running Jenkins/k3s box
+  lifecycle { ignore_changes = [ami, user_data] }
 }
 
 resource "aws_cloudwatch_metric_alarm" "cpu" {
