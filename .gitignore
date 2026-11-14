@@ -4,8 +4,9 @@ node_modules/
 __pycache__/
 .venv/
 .pytest_cache/
-k8s/secret.yaml
 *.tfstate*
 .terraform/
 *.tfvars
 !example.tfvars
+k8s/secret.yaml
+out/
