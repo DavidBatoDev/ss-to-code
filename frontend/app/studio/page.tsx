@@ -155,8 +155,8 @@ export default function Studio() {
         setActiveModel(d.default);
       })
       .catch(() => {
-        setModels(["gpt-5.5"]);
-        setSelected(["gpt-5.5"]);
+        setModels(["gpt-6-luna"]);
+        setSelected(["gpt-6-luna"]);
       });
   }, []);
 

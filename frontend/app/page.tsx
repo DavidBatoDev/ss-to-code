@@ -5,7 +5,7 @@ import { CodeIllustration, HeroIllustration, RobotIllustration, UploadIllustrati
 
 const steps = [
   { Art: UploadIllustration, title: "Drop a screenshot", text: "Paste, drag or upload any UI — a website, a Dribbble shot, a napkin sketch." },
-  { Art: RobotIllustration, title: "AI reads every pixel", text: "gpt-5.5 studies layout, spacing, colors and type, then writes the markup." },
+  { Art: RobotIllustration, title: "AI reads every pixel", text: "gpt-6-luna studies layout, spacing, colors and type, then writes the markup." },
   { Art: CodeIllustration, title: "Ship real code", text: "Get clean HTML, React or Vue with Tailwind. Tweak it by chatting, then download." },
 ];
 
@@ -39,7 +39,7 @@ const testimonials = [
 
 const faqs = [
   { q: "What can I upload?", a: "Any PNG, JPG or WebP up to 8 MB — website screenshots, app mockups, design files, even hand-drawn wireframes." },
-  { q: "Which AI model powers it?", a: "OpenAI's gpt-5.5 with vision. Your image is sent to OpenAI only to generate code and is not stored by us." },
+  { q: "Which AI model powers it?", a: "OpenAI's gpt-6-luna with vision. Your image is sent to OpenAI only to generate code and is not stored by us." },
   { q: "Is the code production-ready?", a: "It's clean, semantic and responsive Tailwind. Treat it as a strong first draft — wire up your data and logic, and ship." },
   { q: "Can I edit the result?", a: "Yes. Describe changes in plain English and get a full updated version, or copy the code into your editor." },
   { q: "Which frameworks are supported?", a: "HTML + Tailwind, React + Tailwind and Vue + Tailwind today, with more on the way." },
@@ -134,7 +134,7 @@ export default function Landing() {
         <div className="animate-pop">
           <span className="inline-flex items-center gap-2 rounded-full border border-cyan/50 bg-mist px-3 py-1 text-xs font-semibold text-cyan">
             <span className="h-1.5 w-1.5 animate-ping rounded-full bg-teal" />
-            Powered by gpt-5.5
+            Powered by gpt-6-luna
           </span>
           <h1 className="font-display mt-5 text-5xl font-extrabold leading-[1.05] tracking-tight text-white md:text-6xl">
             Screenshots in.

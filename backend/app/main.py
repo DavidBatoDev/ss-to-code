@@ -14,10 +14,10 @@ from .prompts import STACKS, build_messages
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ss-to-code")
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 # Models users may pick (comma-separated). The default model is always allowed.
 MODELS = list(dict.fromkeys([MODEL, *filter(None, os.getenv(
-    "OPENAI_MODELS", "gpt-5.5,gpt-5.4-mini").split(","))]))
+    "OPENAI_MODELS", "gpt-6-luna,gpt-6-sol,gpt-6-astra,gpt-5.5,gpt-5.4-mini").split(","))]))
 MAX_IMAGE_BYTES = int(os.getenv("MAX_IMAGE_BYTES", str(8 * 1024 * 1024)))
 
 app = FastAPI(title="ss-to-code API", version=os.getenv("APP_VERSION", "dev"))
