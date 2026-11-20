@@ -1,0 +1,28 @@
+# Supabase pauses free-tier projects after 7 days without activity.
+# This runs a real database query through the REST API every 3 days to keep it awake.
+# It uses the publishable (anon) key, so RLS returns an empty list, but Postgres still runs the query.
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: "17 3 */3 * *" # 03:17 UTC every 3rd day
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          code=$(curl -sS -o body.json -w "%{http_code}" --retry 3 --retry-delay 10 \
+            "$SUPABASE_URL/rest/v1/profiles?select=id&limit=1" \
+            -H "apikey: $SUPABASE_KEY")
+          echo "HTTP $code"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            cat body.json
+            exit 1
+          fi
