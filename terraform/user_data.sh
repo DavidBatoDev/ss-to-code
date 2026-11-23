@@ -35,6 +35,9 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --write-kubec
 mkdir -p /var/lib/jenkins/.kube
 cp /etc/rancher/k3s/k3s.yaml /var/lib/jenkins/.kube/config
 chown -R jenkins:jenkins /var/lib/jenkins/.kube
+# Jenkins loads built images straight into k3s' containerd; allow exactly that one command as root
+echo 'jenkins ALL=(root) NOPASSWD: /usr/local/bin/k3s ctr images import -' > /etc/sudoers.d/jenkins-k3s
+chmod 440 /etc/sudoers.d/jenkins-k3s
 
 # CloudWatch agent: ship syslog + container logs, memory/disk metrics
 curl -fsSLo /tmp/cwagent.deb https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb

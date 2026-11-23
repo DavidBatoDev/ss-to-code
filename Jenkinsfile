@@ -21,6 +21,11 @@ pipeline {
     disableConcurrentBuilds()
   }
 
+  // GitHub can't reach Jenkins (port 8080 only allows my_ip_cidr), so poll main for new commits instead of a webhook
+  triggers {
+    pollSCM('H/8 * * * *')
+  }
+
   stages {
     stage('Checkout') {
       steps { checkout scm }
