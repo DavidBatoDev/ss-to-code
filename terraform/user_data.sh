@@ -24,7 +24,7 @@ apt-get update && apt-get install -y jenkins
 usermod -aG docker jenkins
 
 # AWS CLI v2 (Jenkins deploys the frontend to S3/CloudFront)
-curl -fsSLo /tmp/awscli.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+curl -fsSLo /tmp/awscli.zip https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip
 unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install
 
 # Trivy
@@ -37,7 +37,7 @@ cp /etc/rancher/k3s/k3s.yaml /var/lib/jenkins/.kube/config
 chown -R jenkins:jenkins /var/lib/jenkins/.kube
 
 # CloudWatch agent: ship syslog + container logs, memory/disk metrics
-curl -fsSLo /tmp/cwagent.deb https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+curl -fsSLo /tmp/cwagent.deb https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb
 dpkg -i /tmp/cwagent.deb
 cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json <<'EOF'
 {

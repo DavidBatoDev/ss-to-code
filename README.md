@@ -110,8 +110,9 @@ ss-to-code/
 │   ├── main.tf                  provider, Ubuntu 24.04 AMI, security group, IAM role, EC2, logs, CPU alarm
 │   ├── frontend.tf              Elastic IP, S3 bucket (+ policy, versioning, lifecycle), OAC,
 │   │                            CloudFront Function, distribution, deploy IAM policy, Budget
+│   ├── domain.tf                custom domain: ACM certificate (us-east-1) + validation, DNS outputs
 │   ├── variables.tf             region, instance_type, key_name, my_ip_cidr, backend_node_port
-│   ├── outputs.tf               cloudfront_url, bucket_name, distribution_id, public_ip, jenkins_url, ssm
+│   ├── outputs.tf               site_url, cloudfront_url, bucket_name, distribution_id, public_ip, jenkins_url, ssm
 │   ├── user_data.sh             first-boot: Docker, Jenkins, k3s, Trivy, Node 22, AWS CLI, CW agent
 │   ├── example.tfvars
 │   └── .terraform.lock.hcl      pinned provider versions
@@ -164,7 +165,7 @@ flowchart LR
   U[Browser] -->|HTTPS| CF[CloudFront]
   CF -->|default behavior<br/>CachingOptimized + OAC| S3[(Private S3 bucket<br/>static Next.js export)]
   CF -->|/api/* · CachingDisabled<br/>all methods, 60s read timeout| EC2
-  subgraph EC2[EC2 t3.medium · Elastic IP]
+  subgraph EC2[EC2 t4g.medium · Elastic IP]
     J[Jenkins] -->|kubectl| K[k3s: backend NodePort 30800]
   end
   K --> OAI[OpenAI API]
@@ -199,7 +200,7 @@ flowchart TB
     LC[lifecycle: old versions expire after 14 days]
   end
   subgraph Compute
-    I[aws_instance.box<br/>t3.medium · user_data.sh]
+    I[aws_instance.box<br/>t4g.medium · user_data.sh]
     EIP[aws_eip.box]
     SG[aws_security_group.app<br/>22, 8080 ← my_ip · 30800 ← CloudFront]
     R[IAM role: SSM + CloudWatch + deploy policy]
@@ -229,7 +230,7 @@ The project has two goals that pull against each other: show a realistic product
 **Why**
 - Every page is client-rendered after login anyway: the studio talks to `/api` and Supabase from the browser. A Node server would only be serving HTML.
 - S3 + CloudFront is close to free at this scale, has no process to keep alive, and scales by itself.
-- The backend box only has to handle API traffic, which matters on a single t3.medium.
+- The backend box only has to handle API traffic, which matters on a single t4g.medium.
 
 **Why not the alternatives**
 | Option | Reason it wasn't used |
@@ -535,25 +536,31 @@ flowchart LR
   D --> E[Create Pipeline job]
   E --> F[Configure Supabase URLs]
   F --> G[Build Now]
-  G --> H[App live on cloudfront_url]
+  G --> H[App live on site_url]
 ```
 
 ```bash
 cd terraform
 cp example.tfvars terraform.tfvars    # set my_ip_cidr to your IP/32
 terraform init && terraform apply
-terraform output                      # cloudfront_url, jenkins_url, bucket_name, distribution_id, public_ip, ssm
+terraform output                      # site_url, dns_cname, acm_validation_record, jenkins_url, ...
 ```
+
+The site is served on `pixel2code.cloud-engineer.dev`, whose DNS is at name.com (not Route 53), so two records are managed there by hand:
+
+1. **ACM validation CNAME** (`terraform output acm_validation_record`). Added once and left in place. ACM reuses the same record for the same domain in this account, so after a teardown the new certificate validates on its own. `terraform apply` waits for it (up to 30 min).
+2. **`pixel2code` CNAME → the distribution** (`terraform output dns_cname`). Every new distribution gets a new `*.cloudfront.net` name, so update this record after each re-create.
 
 Terraform variables:
 
 | Variable | Default | Notes |
 |---|---|---|
 | `region` | `ap-southeast-1` | The Jenkinsfile also uses this region |
-| `instance_type` | `t3.medium` | k3s + Jenkins + builds need about 4 GB of RAM |
+| `instance_type` | `t4g.medium` | ARM (Graviton). k3s + Jenkins + builds need about 4 GB of RAM |
 | `my_ip_cidr` | — (required) | Allowed to reach SSH (22) and Jenkins (8080) |
 | `key_name` | `""` | Optional. SSM works without a key pair |
 | `backend_node_port` | `30800` | Must match `nodePort` in `k8s/app.yaml` |
+| `domain_name` | `pixel2code.cloud-engineer.dev` | CloudFront alias and certificate domain (in `domain.tf`) |
 
 `user_data.sh` installs Docker, Jenkins, k3s, Trivy, Node 22, AWS CLI v2 and the CloudWatch agent, and gives Jenkins a kubeconfig.
 
@@ -574,7 +581,7 @@ Terraform variables:
 
 ### Supabase
 
-In **Authentication → URL Configuration**, set the **Site URL** to `https://<cloudfront-domain>` and add `https://<cloudfront-domain>/auth/callback` to **Redirect URLs**. Run the migration in `supabase/migrations/`.
+In **Authentication → URL Configuration**, set the **Site URL** to `https://pixel2code.cloud-engineer.dev` and add `https://pixel2code.cloud-engineer.dev/auth/callback` to **Redirect URLs**. Run the migration in `supabase/migrations/`.
 
 ## CI/CD pipeline
 
@@ -650,12 +657,12 @@ Pipeline options: 40-minute timeout, last 10 builds kept, no concurrent builds, 
 
 | Item | ~ per week |
 |---|---|
-| EC2 t3.medium, 24/7 | $8.20 |
+| EC2 t4g.medium, 24/7 | $7.12 |
 | EBS gp3, 30 GB | $0.60 |
 | Elastic IP (public IPv4) | $0.84 |
 | CloudFront + S3 | $0 (free tier) |
 | CloudWatch (3-day log retention) | ~$0 |
-| **Total** | **~$9.60 / week, ~$4 for 3 days** |
+| **Total** | **~$8.60 / week, ~$3.70 for 3 days** |
 
 OpenAI usage is billed separately. Stop the instance when you're not using it (`aws ec2 stop-instances`). The Elastic IP keeps the CloudFront origin stable across stop/start. Terraform also creates a `$10` AWS Budget.
 

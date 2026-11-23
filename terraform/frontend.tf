@@ -152,7 +152,13 @@ resource "aws_cloudfront_distribution" "site" {
     geo_restriction { restriction_type = "none" }
   }
 
-  viewer_certificate { cloudfront_default_certificate = true }
+  aliases = [var.domain_name]
+
+  viewer_certificate {
+    acm_certificate_arn      = aws_acm_certificate_validation.site.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
 }
 
 # Least privilege for Jenkins on the instance: write this bucket, invalidate this distribution.
